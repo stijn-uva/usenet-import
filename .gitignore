@@ -2,3 +2,4 @@ venv
 *.mbox
 *.db
 *.db-journal
+.idea
