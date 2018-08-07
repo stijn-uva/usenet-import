@@ -118,7 +118,6 @@ class UsenetMboxParser:
 
         if buffer[0:5] != "From ":
             print("\nMessage lacks starting 'From' header, skipping")
-            sys.exit()
             return self.process_one()
 
         # this only happens if the message is just a From line, which indicates archive corruption
@@ -128,7 +127,6 @@ class UsenetMboxParser:
                 raise IndexError
         except IndexError:
             print("\nMessage is empty apart from From header, skipping (check for corrupt archive?)")
-            sys.exit()
             return self.process_one()
 
         # extract headers
