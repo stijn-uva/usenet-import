@@ -1,5 +1,7 @@
+import dateutil.parser
 import sqlite3
-import sys
+import time
+import json
 import re
 
 
@@ -18,15 +20,18 @@ class UsenetMboxParser:
     buffer = ""
     offset = 0
     parsed = 0
+    dictionary = {}
 
-    def parser(self):
-        pass
+    def __init__(self):
+        with open("words_dictionary.json", "r") as dictionary:
+            self.dictionary = json.load(dictionary)
 
     def open(self, file):
         try:
             self.opened_file = open(file, encoding="ISO-8859-1", newline="\n")
             self.opened_file.seek(0)
             self.path = file
+            print("Processing %s" % self.path)
         except IOError:
             raise UsenetMboxParserException("Tried to load file %s for parsing, but could not open for reading" % file)
 
@@ -38,23 +43,26 @@ class UsenetMboxParser:
         results = self.process_one()
         # loop through messages one by one
         while results:
+            try:
+                timestamp = time.mktime(dateutil.parser.parse(results['timestamp'].strip().replace('--', '-')).timetuple())
+            except TypeError:
+                timestamp = 0
+
             fields = (results['msgid'],
                       results['sender'],
-                      results['timestamp'],
-                      results['subject'],
-                      results['message'],
-                      results['headers'])
+                      timestamp,
+                      results['subject'])
 
             groups = results['groups'].replace(',', ' ').replace('  ', ' ').split(' ')
 
             try:
                 cursor.execute(
-                    "INSERT INTO posts (`msgid`, `from`, `timestamp`, `subject`, `message`, `headers`) VALUES (?, ? , ?, ?, ?, ?)",
+                    "INSERT INTO posts (`msgid`, `from`, `timestamp`, `subject`) VALUES (?, ? , ?, ?)",
                     fields)
+                cursor.execute("INSERT INTO postsdata (`msgid`, `message`, `headers`) VALUES (?, ?, ?)", (results['msgid'], results['message'], results['headers']))
             except sqlite3.IntegrityError:
                 print("\nFound duplicate message %s, updating groups" % results['msgid'])
-                current_groups = cursor.execute("SELECT group FROM postsgroup WHERE msgid = ?",
-                                                (results['msgid'])).fetchall()
+                current_groups = cursor.execute("SELECT `group` FROM postsgroup WHERE msgid = ?", (results['msgid'],)).fetchall()
                 # make sure we don't create redundant group links
                 for row in current_groups:
                     if row[0][0] in groups:
@@ -90,7 +98,7 @@ class UsenetMboxParser:
                 # EOF
                 return False
 
-            if re.match(r"From (.+)", line) and gap > 1 and re.match(r"([^ ]+): ([^\n]+)\n", next):
+            if re.match(r"From (.+)", line) and gap > 1 and re.match(r"([^ ]+): ([^\n]*)\n", next):
                 # message finished
                 break
 
@@ -134,12 +142,17 @@ class UsenetMboxParser:
         header_buffer = ""
         current_header = ""
 
-        for line in lines:
+        while True:
+            try:
+                line = lines.pop(0)
+            except IndexError:
+                break
+
             if line.strip() == "":
                 break
 
             header_buffer += line + "\n"
-            header = re.match(r"([^ ]+): ([^\n]+)$", line)
+            header = re.match(r"([^ ]+): ([^\n]*)$", line)
 
             if not header:
                 # multi-line, add to previous header (might be better to overwrite...?)
@@ -153,6 +166,25 @@ class UsenetMboxParser:
 
         # the actual message is whatever's left at this point
         message = line + "\n".join(lines)
+
+        # check if message is english
+        tokens = re.sub(r"[^a-z0-9 ]", " ", message.lower())
+        tokens = re.sub(r"\s+", " ", tokens)
+        tokens = tokens.split(" ")
+        english_words = 0
+        threshold = max(1, int(round(len(tokens) / 10)))
+
+        while len(tokens) > 0:
+            word = tokens.pop(0).strip().lower()
+            if word in self.dictionary:
+                english_words += 1
+            if english_words >= threshold:
+                break
+
+        if english_words < threshold:
+            print("\nMessage %s probably not English, skipping" % headers["message-id"])
+            return self.process_one()
+
 
         try:
             data = {"msgid": headers["message-id"],
@@ -174,28 +206,3 @@ class UsenetMboxParser:
 
 class UsenetMboxParserException(Exception):
     pass
-
-
-# parse command line
-if len(sys.argv) < 2:
-    print("Usage:")
-    print("  parser.py mbox-file [database-file]")
-    print("")
-    print("Example:")
-    print("  parser.py alt.fan.warlord.mbox warlord.db")
-
-# set up database connection
-dbpath = sys.argv[2] if len(sys.argv) > 2 else "usenet-import.db"
-database = sqlite3.connect(dbpath)
-database.text_factory = str  # these are all pre-unicode
-cursor = database.cursor()
-
-cursor.execute(
-    "CREATE TABLE IF NOT EXISTS `posts` ( `msgid` TEXT UNIQUE, `from` TEXT, `timestamp` INTEGER, `subject` TEXT, `message` TEXT, `headers` TEXT, PRIMARY KEY(`msgid`) )")
-cursor.execute("CREATE TABLE IF NOT EXISTS `postsgroup` ( `msgid` TEXT, `group` TEXT )")
-
-# run!
-parser = UsenetMboxParser()
-parser.open(sys.argv[1])
-parser.parse(cursor)
-database.commit()
