@@ -30,9 +30,10 @@ if os.path.isdir(sys.argv[1]):
     for filename in glob.iglob(sys.argv[1] + "/**", recursive=True):
         if not os.path.isdir(filename):
             parser.open(filename)
-            parser.parse(cursor)
+            parser.process_all(cursor)
+            database.commit()
 else:
     parser.open(sys.argv[1])
-    parser.parse(cursor)
+    parser.process_all(cursor)
 
 database.commit()

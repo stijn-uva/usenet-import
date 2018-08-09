@@ -4,15 +4,24 @@
 
 Usage:
 
-`python3 import.py mbox-file [database-file]`
+`python3 import.py posts-file [database-file]`
 
 `python3 import.py alt.fan.warlord.mbox import.db`
 
-Parses the `mbox-file` supplied and puts messages contained 
-therein into a SQLite database. `mbox-file` can also be a
-folder, in which case that folder will be crawled
-recursively and every file found within it or its subfolders
-will be parsed (so be careful with non-mbox files in there).
+Parses the `posts-file` supplied and inserts messages contained 
+therein into a SQLite database (named `usenet-import.db` by
+default). The file can be either a mbox file or an A News 
+article. 
+
+`posts-file` can also be a folder, in which case that folder 
+will be crawled recursively and every file found within it 
+or its subfolders will be parsed (so be careful with non-mbox 
+files in there).
+
+This makes the importer compatible with both the Usenet
+Historical Archive and the UTZOO archive (though it is
+recommended that you clean out non-mbox/anews files from
+the latter before importing it).
  
 The SQLite database has three tables:
 
