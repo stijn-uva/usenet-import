@@ -1,16 +1,20 @@
 # Usenet archive importer
 
-## parser.py
+## import.py
 
 Usage:
 
-`python3 parser.py mbox-file [database-file]`
+`python3 import.py mbox-file [database-file]`
 
-`python3 parser.py alt.fan.warlord.mbox import.db`
+`python3 import.py alt.fan.warlord.mbox import.db`
 
-Parses the `mbox` file supplied and puts messages contained 
-therein into a SQLite database. The SQLite database has three
-tables:
+Parses the `mbox-file` supplied and puts messages contained 
+therein into a SQLite database. `mbox-file` can also be a
+folder, in which case that folder will be crawled
+recursively and every file found within it or its subfolders
+will be parsed (so be careful with non-mbox files in there).
+ 
+The SQLite database has three tables:
 
 ### posts
 
