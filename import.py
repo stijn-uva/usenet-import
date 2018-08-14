@@ -25,7 +25,8 @@ cursor.execute(
 cursor.execute("CREATE TABLE IF NOT EXISTS `postsgroup` ( `msgid` TEXT, `group` TEXT )")
 cursor.execute("CREATE TABLE IF NOT EXISTS `postsdata` ( `msgid` TEXT, `message` TEXT, `headers` TEXT, PRIMARY KEY(`msgid`) )")
 
-parser = parser.UsenetMboxParser()
+# load and run parser
+parser = parser.UsenetMboxParser(dictionary="dictionary.json", timezones="timezones")
 if os.path.isdir(sys.argv[1]):
     for filename in glob.iglob(sys.argv[1] + "/**", recursive=True):
         if not os.path.isdir(filename):

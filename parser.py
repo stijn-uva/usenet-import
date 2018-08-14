@@ -6,14 +6,17 @@ import re
 
 
 class UsenetMboxParser:
-    """
-    Parses a Usenet Mbox archive (such as found on e.g. the Usenet Historical Archive) into a pre-existing SQLite
-    database.
+    """Imports a Usenet archive into an SQLite database
+
+    Assumes the SQLite database already exists (see import.py). Compatible with single-post A News archives and single-
+    or multi-post Mbox archives (e.g. the UTZOO and Usenet Historical Archive archives).
+
+    Also uses a crude (to be improved!) spam check to filter out obvious spam posts.
 
     Usage:
         parser = UsenetMboxParser()
         parser.open("alt.fan.warlord.mbox")
-        parser.parse()
+        parser.process_all()
     """
     opened_file = None
     path = ""
@@ -24,28 +27,45 @@ class UsenetMboxParser:
     dictionary = {}
     timezones = {}
 
-    def __init__(self):
-        with open("words_dictionary.json", "r") as dictionary:
-            self.dictionary = json.load(dictionary)
+    def __init__(self, dictionary="dictionary.json", timezones="timezones"):
+        """Load timezones and dictionary for timestamp parsing and spam filtering
 
-        for tz in open("timezones", "r"):
-            description = str(tz).split(" ")
-            for abbreviation in description[1:]:
-                self.timezones[abbreviation.strip()] = int(float(description[0]) * 3600)
+        Arguments:
+        dictionary -- Path to a JSON file with a {"word":1}-style index of words
+        timezones -- Path to a text file with a "-8 PST PT HNP PT AKDT"-style listing of timezones (one per line)
+        """
+        try:
+            self.dictionary = json.load(open(dictionary, "r"))
+        except (IOError, json.decoder.JSONDecodeError) as e:
+            print("Could load spam check dictionary.")
+
+        try:
+            for tz in open(timezones, "r"):
+                description = str(tz).split(" ")
+                for abbreviation in description[1:]:
+                    self.timezones[abbreviation.strip()] = int(float(description[0]) * 3600)
+        except (IOError, IndexError) as e:
+            print("Could not load timezones")
 
     def open(self, file):
-        try:
-            self.opened_file = open(file, encoding="ISO-8859-1", newline="\n")
-            self.opened_file.seek(0)
-            self.path = file
-            print("\nProcessing %s" % self.path)
-        except IOError:
-            raise UsenetMboxParserException("Tried to load file %s for parsing, but could not open for reading" % file)
+        """Open file for parsing
+
+        Argument:
+        file -- path to file or folder to process
+        """
+        self.opened_file = open(file, encoding="ISO-8859-1", newline="\n")
+        self.opened_file.seek(0)
+        self.path = file
+        print("\nProcessing %s" % self.path)
 
     def process_all(self, cursor):
-        """ Open file for parsing and save messages one by one """
+        """Determine archive type and import/link messages one by one
+
+        Argument:
+        cursor -- a sqlite3 cursor to a database into which the posts are to be imported
+        """
         if not self.opened_file:
-            raise UsenetMboxParserException("No file currently loaded for parsing")
+            raise RuntimeError("Load a file for processing first with open()")
 
         # determine whether we're dealing with A news or the more modern mbox format
         first = self.opened_file.readline()
@@ -57,29 +77,28 @@ class UsenetMboxParser:
         while results:
             try:
                 timestamp = time.mktime(
-                    dateutil.parser.parse(results['timestamp'].strip().replace('--', '-'), tzinfos=self.timezones).timetuple())
+                    dateutil.parser.parse(results['timestamp'].strip().replace('--', '-'),
+                                          tzinfos=self.timezones).timetuple())
             except (TypeError, ValueError) as e:
                 print("\nCouldn't parse timestamp %s: %s" % (results["timestamp"], str(e)))
                 timestamp = 0
 
-            fields = (results['msgid'],
-                      results['sender'],
-                      timestamp,
-                      results['subject'])
-
+            fields = (results['msgid'], results['sender'], timestamp, results['subject'])
+            data = (results['msgid'], results['message'], results['headers'])
             groups = results['groups'].replace(',', ' ').replace('  ', ' ').split(' ')
 
             try:
                 cursor.execute(
-                    "INSERT INTO posts (`msgid`, `from`, `timestamp`, `subject`) VALUES (?, ? , ?, ?)",
-                    fields)
-                cursor.execute("INSERT INTO postsdata (`msgid`, `message`, `headers`) VALUES (?, ?, ?)",
-                               (results['msgid'], results['message'], results['headers']))
+                    "INSERT INTO posts (`msgid`, `from`, `timestamp`, `subject`) VALUES (?, ? , ?, ?)", fields)
+                cursor.execute(
+                    "INSERT INTO postsdata (`msgid`, `message`, `headers`) VALUES (?, ?, ?)", data)
                 self.total += 1
             except sqlite3.IntegrityError:
+                # message ID already exists
                 print("\nFound duplicate message %s, updating groups" % results['msgid'])
                 current_groups = cursor.execute("SELECT `group` FROM postsgroup WHERE msgid = ?",
                                                 (results['msgid'],)).fetchall()
+
                 # make sure we don't create redundant group links
                 for row in current_groups:
                     if row[0] in groups:
@@ -94,12 +113,11 @@ class UsenetMboxParser:
 
         # clean up
         self.opened_file = None
-        self.group = None
         self.parsed = 0
         self.offset = 0
 
     def parse_one_mbox(self):
-        """ Processes the first available message in the mbox file being read """
+        """ Processes the first available message in the mbox file being read"""
         self.opened_file.seek(self.offset)
 
         buffer = ""  # the message
@@ -131,8 +149,8 @@ class UsenetMboxParser:
 
             buffer += line
 
-            # this is not EOF quite yet, so break instead of return to process the last message
             if next == "":
+                # this is not EOF quite yet, so break instead of return to process the last message
                 break
 
         buffer = buffer.strip()
@@ -205,21 +223,8 @@ class UsenetMboxParser:
         message = line + "\n".join(lines)
 
         # check if message is english
-        tokens = re.sub(r"[^a-z0-9 ]", " ", message.lower())
-        tokens = re.sub(r"\s+", " ", tokens)
-        tokens = tokens.split(" ")
-        english_words = 0
-        threshold = max(1, int(round(len(tokens) / 10)))
-
-        while len(tokens) > 0:
-            word = tokens.pop(0).strip().lower()
-            if word in self.dictionary:
-                english_words += 1
-            if english_words >= threshold:
-                break
-
-        if english_words < threshold:
-            print("\nMessage %s probably not English, skipping" % headers["message-id"])
+        if self.is_spam(message):
+            print("\nMessage %s is probably spam, skipping" % headers["message-id"])
             return self.parse_one_mbox()
 
         try:
@@ -241,7 +246,9 @@ class UsenetMboxParser:
 
     def parse_one_anews(self):
         """Processes single message, formatted as A News
-        A News puts each post ("article") in its own file, so this is relatively simple"""
+
+        A News puts each post ("article") in its own file, so this is relatively simple
+        """
         data = {}
 
         header = self.opened_file.readline()
@@ -271,6 +278,23 @@ class UsenetMboxParser:
 
         return data
 
+    def is_spam(self, message):
+        """Check if a message is spam - currently just checks if at least 10% of it is recognizably English
 
-class UsenetMboxParserException(Exception):
-    pass
+        Argument:
+        message -- the message to be checked, as a text string
+        """
+        tokens = re.sub(r"[^a-z0-9 ]", " ", message.lower())
+        tokens = re.sub(r"\s+", " ", tokens)
+        tokens = tokens.split(" ")
+        english_words = 0
+        threshold = max(1, int(round(len(tokens) / 10)))
+
+        while len(tokens) > 0:
+            word = tokens.pop(0).strip().lower()
+            if word in self.dictionary:
+                english_words += 1
+            if english_words >= threshold:
+                break
+
+        return english_words < threshold
