@@ -6,7 +6,8 @@ import re
 
 
 class UsenetMboxParser:
-    """Imports a Usenet archive into an SQLite database
+    """
+    Imports a Usenet archive into an SQLite database
 
     Assumes the SQLite database already exists (see import.py). Compatible with single-post A News archives and single-
     or multi-post Mbox archives (e.g. the UTZOO and Usenet Historical Archive archives).
@@ -28,16 +29,19 @@ class UsenetMboxParser:
     timezones = {}
 
     def __init__(self, dictionary="dictionary.json", timezones="timezones"):
-        """Load timezones and dictionary for timestamp parsing and spam filtering
+        """
+        Load timezones and dictionary for timestamp parsing and spam filtering
 
-        Arguments:
-        dictionary -- Path to a JSON file with a {"word":1}-style index of words
-        timezones -- Path to a text file with a "-8 PST PT HNP PT AKDT"-style listing of timezones (one per line)
+        :param string dictionary: Path to a JSON file with a {"word":1}-style
+                                  index of words
+        :param string timezones:  Path to a text file with a "-8 PST PT HNP PT
+                                  AKDT"-style listing of timezones (one per
+                                  line)
         """
         try:
             self.dictionary = json.load(open(dictionary, "r"))
         except (IOError, json.decoder.JSONDecodeError) as e:
-            print("Could load spam check dictionary.")
+            print("Could load spam check dictionary - messages will not be checked for spam!")
 
         try:
             for tz in open(timezones, "r"):
@@ -45,13 +49,13 @@ class UsenetMboxParser:
                 for abbreviation in description[1:]:
                     self.timezones[abbreviation.strip()] = int(float(description[0]) * 3600)
         except (IOError, IndexError) as e:
-            print("Could not load timezones")
+            print("Could not load timezones - dates may not be parsed correctly!")
 
     def open(self, file):
-        """Open file for parsing
+        """
+        Open file for parsing
 
-        Argument:
-        file -- path to file or folder to process
+        :param string file: Path to file or folder to proces.
         """
         self.opened_file = open(file, encoding="ISO-8859-1", newline="\n")
         self.opened_file.seek(0)
@@ -59,10 +63,11 @@ class UsenetMboxParser:
         print("\nProcessing %s" % self.path)
 
     def process_all(self, cursor):
-        """Determine archive type and import/link messages one by one
+        """
+        Determine archive type and import/link messages one by one
 
-        Argument:
-        cursor -- a sqlite3 cursor to a database into which the posts are to be imported
+        :param sqlite3.Cursor cursor: An SQLite3 cursor to a database into
+                                      which posts are to be imported.
         """
         if not self.opened_file:
             raise RuntimeError("Load a file for processing first with open()")
@@ -117,7 +122,11 @@ class UsenetMboxParser:
         self.offset = 0
 
     def parse_one_mbox(self):
-        """ Processes the first available message in the mbox file being read"""
+        """
+        Processes the first available message in the mbox file being read
+
+        :return dict: Message data
+        """
         self.opened_file.seek(self.offset)
 
         buffer = ""  # the message
@@ -223,7 +232,7 @@ class UsenetMboxParser:
         message = line + "\n".join(lines)
 
         # check if message is english
-        if self.is_spam(message):
+        if self.dictionary != {} and self.is_spam(message):
             print("\nMessage %s is probably spam, skipping" % headers["message-id"])
             return self.parse_one_mbox()
 
@@ -245,9 +254,13 @@ class UsenetMboxParser:
             return self.parse_one_mbox()
 
     def parse_one_anews(self):
-        """Processes single message, formatted as A News
+        """
+        Processes single message, formatted as A News
 
-        A News puts each post ("article") in its own file, so this is relatively simple
+        A News puts each post ("article") in its own file, so this is relatively
+        simple
+
+        :return dict: Message data
         """
         data = {}
 
@@ -279,10 +292,13 @@ class UsenetMboxParser:
         return data
 
     def is_spam(self, message):
-        """Check if a message is spam - currently just checks if at least 10% of it is recognizably English
+        """
+        Check if a message is spam
 
-        Argument:
-        message -- the message to be checked, as a text string
+        Currently just checks if at least 10% of it is recognizably English.
+
+        :param string message: Message to be checked, as a string.
+        :return bool: Whether the message is spam
         """
         tokens = re.sub(r"[^a-z0-9 ]", " ", message.lower())
         tokens = re.sub(r"\s+", " ", tokens)
