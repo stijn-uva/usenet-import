@@ -27,6 +27,8 @@ class UsenetMboxParser:
     total = 0
     dictionary = {}
     timezones = {}
+    id = 1
+    own_id = ""
 
     def __init__(self, dictionary="dictionary.json", timezones="timezones"):
         """
@@ -50,6 +52,8 @@ class UsenetMboxParser:
                     self.timezones[abbreviation.strip()] = int(float(description[0]) * 3600)
         except (IOError, IndexError) as e:
             print("Could not load timezones - dates may not be parsed correctly!")
+
+        self.own_id = "imported-" + str(int(time.time()))
 
     def open(self, file):
         """
@@ -75,7 +79,8 @@ class UsenetMboxParser:
         # determine whether we're dealing with A news or the more modern mbox format
         first = self.opened_file.readline()
         self.opened_file.seek(0)
-        parse_method = self.parse_one_anews if len(first) > 0 and first[0] == "A" else self.parse_one_mbox
+
+        parse_method = self.parse_one_anews if len(first) > 0 and first[0] == "A" and first[:7] != "Archive" else self.parse_one_mbox
 
         results = parse_method()
         # loop through messages one by one
@@ -91,6 +96,18 @@ class UsenetMboxParser:
             fields = (results['msgid'], results['sender'], timestamp, results['subject'])
             data = (results['msgid'], results['message'], results['headers'])
             groups = results['groups'].replace(',', ' ').replace('  ', ' ').split(' ')
+
+            # xrefs can be both server names and group names; group names have a message number
+            # appended to them, marked by a ":" delimiter. This filters the domain names and adds
+            # any leftover group to the groups list
+            xref = results["xref"].split(" ")
+            xref = [ref.split(":")[0] for ref in xref if ":" in ref]
+            for group in xref:
+                if group not in groups:
+                    groups.append(group)
+
+            if not groups:
+                print("\nSkipping message %s: no groups (maybe not a Usenet message?)" % results['msgid'])
 
             try:
                 cursor.execute(
@@ -228,6 +245,10 @@ class UsenetMboxParser:
         if "subject" not in headers and "title" in headers:
             headers["subject"] = headers["title"]
 
+        if "message-id" in headers and headers["message-id"] == "":
+            headers["message-id"] = "<" + str(self.id) + "@" + self.own_id + ">"
+            self.id += 1
+
         # the actual message is whatever's left at this point
         message = line + "\n".join(lines)
 
@@ -237,20 +258,23 @@ class UsenetMboxParser:
             return self.parse_one_mbox()
 
         try:
-            data = {"msgid": headers["message-id"],
-                    "sender": headers["from"],
-                    "timestamp": headers["date"],
-                    "subject": headers["subject"],
-                    "message": message,
-                    "groups": headers["newsgroups"],
-                    "headers": header_buffer}
+            data = {
+                "msgid": headers["message-id"],
+                "sender": headers["from"],
+                "timestamp": headers["date"],
+                "subject": headers["subject"],
+                "xref": headers["xref"] if "xref" in headers else "",
+                "message": message,
+                "groups": headers["newsgroups"],
+                "headers": header_buffer
+            }
 
             self.parsed += 1
             print("Parsed message %i (%i total)\r" % (self.parsed, self.total), end="")
 
             return data
         except KeyError as e:
-            print("\nMissing header '" + str(e) + "', skipping")
+            print("\nMissing header " + str(e) + ", skipping")
             return self.parse_one_mbox()
 
     def parse_one_anews(self):
@@ -278,6 +302,7 @@ class UsenetMboxParser:
         data["timestamp"] = self.opened_file.readline()
         data["subject"] = self.opened_file.readline()
         data["headers"] = "A" + "\n".join(data)
+        data["xref"] = ""
         data["message"] = ""
 
         while True:

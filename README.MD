@@ -22,6 +22,11 @@ This makes the importer compatible with both the Usenet
 Historical Archive and the UTZOO archive (though it is
 recommended that you clean out non-mbox/anews files from
 the latter before importing it).
+
+The importer is also compatible with most of the messages found
+in the Shofar FTP archives, provided they are run through 
+`clean.py` (see below) first. Generally speaking, most archives 
+should be parseable after cleaning.
  
 The SQLite database has three tables:
 
@@ -58,3 +63,27 @@ body and headers respectively.
 | `msgid` | Message ID (unique, matches `msgid` in `posts`) |
 | `message` | Full message, minus headers and surrounding whitespace |
 | `headers` | All headers
+
+## Other scripts
+`clean.py` accepts a path to a file or directory as an argument.
+All files are then "cleaned": that is, all data occurring before
+the first block of text that contains the string `From: ` (with 
+a space after `:`) is removed from the file.
+
+## Things to keep in mind
+The importer does its best to import archived messages too. To
+this end, it will import messages with empty `Message-ID`s, as
+well as messages lacking a `Newsgroups: ` reader as long as
+they have an `Xrefs: ` header referencing at least one group.
+
+Empty Message-IDs are replaced with a placeholder Message-ID of
+the format `<index@imported-timestamp>` where `index` is an
+incrementing number signifying the amount of ID-less messages
+imported so far and `timestamp` is the UNIX timestamp at which
+the import started; e.g. `<25@imported-1514764800>`. This only
+applies to MBox-style posts: if the Message-ID is missing in an
+A News archive, the message is ignored. 
+
+This may lead to duplicates if the original message is also 
+included in another imported archive; the importer will not 
+notice the duplicate as it has a different Message-ID.
